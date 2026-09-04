@@ -1,0 +1,335 @@
+// ============================================================================
+// RETENTIONIQ — POWER BI DAX MEASURES REGISTRY
+// ============================================================================
+// Project: RetentionIQ — Customer Retention & Revenue Intelligence
+// Description: Explicit DAX measures organized by analytical category for Power BI.
+// Framework: Retention Priority (Monitor, Priority, Critical) — Explainable Framework
+// Note: Retention Priority Score is a business prioritization rule, NOT a predictive ML model.
+// ============================================================================
+
+
+// ============================================================================
+// A. CUSTOMER KPIs (Source: customer_analytics)
+// Grain: 1 row per customer (500 total customer accounts)
+// ============================================================================
+
+Total Customers = 
+COUNTROWS(customer_analytics)
+
+Active Customers = 
+CALCULATE(
+    COUNTROWS(customer_analytics),
+    customer_analytics[customer_status] = "Active"
+)
+
+Churned Customers = 
+CALCULATE(
+    COUNTROWS(customer_analytics),
+    customer_analytics[customer_status] = "Churned"
+)
+
+// Customer Churn Rate: Percentage of customer accounts currently in Churned status (22.00%).
+// Contrast with Subscription Churn Rate (subscription-level contract granularity).
+Customer Churn Rate = 
+DIVIDE(
+    [Churned Customers],
+    [Total Customers],
+    0
+)
+
+
+// ============================================================================
+// B. SUBSCRIPTION KPIs (Source: subscriptions_cleaned)
+// Grain: 1 row per subscription contract (5,000 total subscriptions)
+// ============================================================================
+
+Total Subscriptions = 
+COUNTROWS(subscriptions_cleaned)
+
+Active Subscriptions = 
+CALCULATE(
+    COUNTROWS(subscriptions_cleaned),
+    subscriptions_cleaned[churn_flag] = FALSE
+)
+
+Churned Subscriptions = 
+CALCULATE(
+    COUNTROWS(subscriptions_cleaned),
+    subscriptions_cleaned[churn_flag] = TRUE
+)
+
+// Subscription Churn Rate: Percentage of total subscriptions churned over time (9.72%).
+// Contrast with Customer Churn Rate (customer-level account granularity).
+Subscription Churn Rate = 
+DIVIDE(
+    [Churned Subscriptions],
+    [Total Subscriptions],
+    0
+)
+
+
+// ============================================================================
+// C. CUSTOMER-LEVEL REVENUE KPIs (Source: customer_analytics)
+// Grain: Customer-level aggregate revenue across 500 accounts
+// WARNING: Do NOT combine or sum customer_analytics[total_mrr] and 
+// subscriptions_cleaned[mrr_amount] in the same visual to prevent double-counting.
+// ============================================================================
+
+Customer Total MRR = 
+SUM(customer_analytics[total_mrr])
+
+Customer Total ARR = 
+SUM(customer_analytics[total_arr])
+
+Average Customer MRR = 
+AVERAGE(customer_analytics[total_mrr])
+
+Active Customer MRR = 
+CALCULATE(
+    [Customer Total MRR],
+    customer_analytics[customer_status] = "Active"
+)
+
+Churned Customer MRR = 
+CALCULATE(
+    [Customer Total MRR],
+    customer_analytics[customer_status] = "Churned"
+)
+
+
+// ============================================================================
+// D. SUBSCRIPTION-LEVEL REVENUE KPIs (Source: subscriptions_cleaned)
+// Grain: Subscription contract revenue across 5,000 contracts
+// ============================================================================
+
+Subscription Total MRR = 
+SUM(subscriptions_cleaned[mrr_amount])
+
+Subscription Total ARR = 
+SUM(subscriptions_cleaned[arr_amount])
+
+Active Subscription MRR = 
+CALCULATE(
+    [Subscription Total MRR],
+    subscriptions_cleaned[churn_flag] = FALSE
+)
+
+// Churned Subscription MRR: Represents genuinely lost recurring revenue 
+// from terminated subscription contracts ($1,179,139).
+Churned Subscription MRR = 
+CALCULATE(
+    [Subscription Total MRR],
+    subscriptions_cleaned[churn_flag] = TRUE
+)
+
+
+// ============================================================================
+// E. RETENTION EXPOSURE & PRIORITY METRICS (Source: customer_analytics)
+// Definition: Retention exposure represents ACTIVE customer MRR associated 
+// with Critical ($2,857,641) or Priority ($4,307,073) retention risk tiers. 
+// NOTE: Do NOT refer to this as "Lost Revenue" because these customers are
+// currently ACTIVE and generating revenue that must be protected ($7,164,714 Total).
+// Terminology: "MRR Exposure", "Retention Exposure", "MRR at Risk".
+// ============================================================================
+
+Monitor Customers = 
+CALCULATE(
+    COUNTROWS(customer_analytics),
+    customer_analytics[retention_priority] = "Monitor"
+)
+
+Priority Customers = 
+CALCULATE(
+    COUNTROWS(customer_analytics),
+    customer_analytics[retention_priority] = "Priority"
+)
+
+Critical Customers = 
+CALCULATE(
+    COUNTROWS(customer_analytics),
+    customer_analytics[retention_priority] = "Critical"
+)
+
+Critical Active Customers = 
+CALCULATE(
+    COUNTROWS(customer_analytics),
+    customer_analytics[retention_priority] = "Critical",
+    customer_analytics[customer_status] = "Active"
+)
+
+Critical Active MRR Exposure = 
+CALCULATE(
+    [Customer Total MRR],
+    customer_analytics[retention_priority] = "Critical",
+    customer_analytics[customer_status] = "Active"
+)
+
+Priority Active MRR Exposure = 
+CALCULATE(
+    [Customer Total MRR],
+    customer_analytics[retention_priority] = "Priority",
+    customer_analytics[customer_status] = "Active"
+)
+
+// Total Active MRR at risk across Critical ($2,857,641) and Priority ($4,307,073) tiers.
+// Uses KEEPFILTERS to safely preserve visual row context (Critical = $2.86M, Priority = $4.31M, Monitor = $0).
+Retention Exposure Total = 
+CALCULATE(
+    [Customer Total MRR],
+    KEEPFILTERS(
+        customer_analytics[retention_priority] IN {"Critical", "Priority"}
+    ),
+    customer_analytics[customer_status] = "Active"
+)
+
+
+// ============================================================================
+// F. CHURN EVENT METRICS (Source: churn_events_cleaned)
+// Grain: Historical lifecycle events (600 total event records)
+// NOTE: 10.17% of churn events (61 records) represent reactivations.
+// For genuine historical churn events, reactivations are excluded (539 events).
+// ============================================================================
+
+// Total genuine churn events (excluding reactivations)
+Total Churn Events = 
+CALCULATE(
+    COUNTROWS(churn_events_cleaned),
+    churn_events_cleaned[is_reactivation] = FALSE
+)
+
+Reactivation Events = 
+CALCULATE(
+    COUNTROWS(churn_events_cleaned),
+    churn_events_cleaned[is_reactivation] = TRUE
+)
+
+Reactivation Rate = 
+DIVIDE(
+    [Reactivation Events],
+    COUNTROWS(churn_events_cleaned),
+    0
+)
+
+
+// ============================================================================
+// G. SUPPORT & ESCALATION METRICS (Source: support_tickets_cleaned & customer_analytics)
+// Grain: Support ticket logs (2,000 total tickets)
+// NOTE: DAX AVERAGE automatically ignores NULL/blank satisfaction scores.
+// Missing scores are NOT replaced with zero to maintain average validity.
+// ============================================================================
+
+Total Support Tickets = 
+COUNTROWS(support_tickets_cleaned)
+
+Escalated Support Tickets = 
+CALCULATE(
+    COUNTROWS(support_tickets_cleaned),
+    support_tickets_cleaned[escalation_flag] = TRUE
+)
+
+Support Escalation Rate = 
+DIVIDE(
+    [Escalated Support Tickets],
+    [Total Support Tickets],
+    0
+)
+
+Average Resolution Time = 
+AVERAGE(support_tickets_cleaned[resolution_time_hours])
+
+Average First Response Time = 
+AVERAGE(support_tickets_cleaned[first_response_time_minutes])
+
+Average Satisfaction Score = 
+AVERAGE(support_tickets_cleaned[satisfaction_score])
+
+
+// ============================================================================
+// H. CUSTOMER BEHAVIOR & LIFECYCLE METRICS (Source: customer_analytics)
+// ============================================================================
+
+Average Tenure = 
+AVERAGE(customer_analytics[tenure_months])
+
+Total Upgrades = 
+SUM(customer_analytics[total_upgrades])
+
+Total Downgrades = 
+SUM(customer_analytics[total_downgrades])
+
+Customers With Upgrades = 
+CALCULATE(
+    COUNTROWS(customer_analytics),
+    customer_analytics[total_upgrades] > 0
+)
+
+Customers With Downgrades = 
+CALCULATE(
+    COUNTROWS(customer_analytics),
+    customer_analytics[total_downgrades] > 0
+)
+
+Customers With Reactivation Events = 
+CALCULATE(
+    COUNTROWS(customer_analytics),
+    customer_analytics[reactivation_events] > 0
+)
+
+
+// ============================================================================
+// I. DATE-BASED MEASURES (Source: DimDate & Inactive Relationships)
+// Uses USERELATIONSHIP to activate secondary date connections without creating
+// circular or ambiguous filter paths in the Power BI data model.
+// ============================================================================
+
+// Customer Signup Trend: Number of new accounts registered per calendar period
+Customer Signup Trend = 
+CALCULATE(
+    [Total Customers],
+    USERELATIONSHIP(DimDate[Date], customer_analytics[signup_date])
+)
+
+// Subscription Start Trend: Number of new subscription contracts initiated per period
+Subscription Start Trend = 
+CALCULATE(
+    [Total Subscriptions],
+    USERELATIONSHIP(DimDate[Date], subscriptions_cleaned[start_date])
+)
+
+// Churn Event Trend: Number of historical churn events occurring per calendar period
+Churn Event Trend = 
+CALCULATE(
+    [Total Churn Events],
+    USERELATIONSHIP(DimDate[Date], churn_events_cleaned[churn_date])
+)
+
+// Support Ticket Trend: Number of support tickets submitted per calendar period
+Support Ticket Trend = 
+CALCULATE(
+    [Total Support Tickets],
+    USERELATIONSHIP(DimDate[Date], support_tickets_cleaned[submitted_at])
+)
+
+
+// ============================================================================
+// DIMDATE DAX TABLE CREATION CODE
+// Copy/Paste into Power BI as a New Table: DimDate
+// ============================================================================
+/*
+DimDate = 
+VAR MinYear = YEAR(MIN(subscriptions_cleaned[start_date]))
+VAR MaxYear = YEAR(MAX(subscriptions_cleaned[start_date]))
+RETURN
+ADDCOLUMNS(
+    CALENDAR(DATE(MinYear, 1, 1), DATE(MaxYear, 12, 31)),
+    "Year", YEAR([Date]),
+    "MonthNo", MONTH([Date]),
+    "MonthName", FORMAT([Date], "MMM"),
+    "MonthYear", FORMAT([Date], "MMM YYYY"),
+    "Quarter", "Q" & FORMAT([Date], "Q"),
+    "YearQuarter", YEAR([Date]) & "-Q" & FORMAT([Date], "Q"),
+    "DayOfWeek", FORMAT([Date], "ddd"),
+    "DayOfWeekNo", WEEKDAY([Date], 2),
+    "YearMonthNo", YEAR([Date]) * 100 + MONTH([Date])
+)
+*/
